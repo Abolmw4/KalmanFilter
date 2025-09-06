@@ -6,11 +6,14 @@
 *.lo
 *.o
 *.obj
-
+.idea
+build
+__pycache__
 # Precompiled Headers
 *.gch
 *.pch
-
+*.txt.user
+*.txt.user.*
 # Linker files
 *.ilk
 
