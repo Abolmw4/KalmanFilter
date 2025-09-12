@@ -1,6 +1,27 @@
 import matplotlib.pyplot as plt
 from typing import List, Tuple
-import asyncio
+from pydantic import BaseModel, Field
+
+
+class Radar(BaseModel):
+    X: float = Field(title="X cartesian position")
+    Y: float = Field(title="Y cartesian position")
+    V_X: float = Field(title="V_X speed in X direction", gt=0)
+    V_Y: float = Field(title="V_Y speed in Y direction", gt=0)
+
+class RadarInfo(BaseModel):
+    Id: int
+    radar_info: Radar
+
+class EstimateInfo(BaseModel):
+    Id: int
+    X: float
+    Y: float
+
+class Response(BaseModel):
+    Id: int
+    x: float
+    Y: float
 
 def plot(points: List[Tuple]):
     x_vals, y_vals = zip(*points)
@@ -67,13 +88,3 @@ def plot_three_lines(points1: List[Tuple], points2: List[Tuple], points3: List[T
     # Save the plot (headless safe)
     plt.savefig("line_plot.png")
 
-async def my_function(name: str, age: int):
-    await your_function(age)
-    print("finished")
-
-async def your_function(age: int):
-    print(f"your age is {age}")
-
-
-if __name__ == "__main__":
-    asyncio.gather(my_function("Abolfazl", 27), your_function(27))
