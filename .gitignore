@@ -16,7 +16,7 @@ __pycache__
 *.txt.user.*
 # Linker files
 *.ilk
-
+*.csv
 # Debugger Files
 *.pdb
 
