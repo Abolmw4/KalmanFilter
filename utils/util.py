@@ -1,7 +1,23 @@
 import matplotlib.pyplot as plt
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any
 from pydantic import BaseModel, Field
+import csv
+import json
+from kafka import KafkaProducer, KafkaConsumer
 
+def read_json_file(file_path: str="config/config.json") -> Dict[str, Any] | None:
+    try:
+        with open(file_path, 'r') as file:
+            return json.load(file)
+    except FileNotFoundError:
+        print(f"Error: File '{file_path}' not found.")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON in file '{file_path}': {e}")
+        return None
+    except Exception as e:
+        print(f"Error reading file '{file_path}': {e}")
+        return None
 
 class Radar(BaseModel):
     X: float = Field(title="X cartesian position")
@@ -23,6 +39,44 @@ class Response(BaseModel):
     x: float
     Y: float
 
+async def send_messege_to_kafka(csv_file: str, kakfk_topic: str) -> None:
+    PRODUCER = KafkaProducer(
+        bootstrap_servers=['localhost:9092'],
+        value_serializer=lambda v: json.dumps(v).encode('utf-8')
+    )
+    with open(csv_file, mode="r") as csvFile:
+        reader = csv.DictReader(csvFile)
+        for row in reader:
+            message = {
+                'trackID': int(row['trackID']),
+                'X': float(row['X']),
+                'Y': float(row['Y']),
+                'V_X': float(row['V_X']),
+                'V_Y': float(row['V_Y'])
+            }
+            try:
+                PRODUCER.send(kakfk_topic, value=message)
+            except Exception as error:
+                print(f"Can't send messege to topic becuase '{error}'")
+    PRODUCER.flush()
+
+def recieve_messege_from_kafka(kafka_topic: str):
+    CONSUMER = KafkaConsumer(
+        kafka_topic,
+        bootstrap_servers=['localhost:9092'],
+        auto_offset_reset='earliest',  # Start reading at the earliest message
+        enable_auto_commit=True,
+        # group_id='my-group',
+        value_deserializer=lambda x: json.loads(x.decode('utf-8')),
+        key_deserializer=lambda x: json.loads(x.decode('utf-8')) if x else None
+    )
+
+    print("Listening for messages...")
+
+    for messege in CONSUMER:
+        yield messege.value
+    CONSUMER.close()
+
 def plot(points: List[Tuple]):
     x_vals, y_vals = zip(*points)
 
@@ -38,7 +92,6 @@ def plot(points: List[Tuple]):
 
     # Save or show the plot
     plt.savefig("line_plot.png")  # For headless environments
-
 
 def plot_two_lines(points1: List[Tuple], points2: List[Tuple]):
     x1, y1 = zip(*points1)
@@ -61,7 +114,6 @@ def plot_two_lines(points1: List[Tuple], points2: List[Tuple]):
 
     # Save the plot (headless safe)
     plt.savefig("line_plot.png")
-
 
 def plot_three_lines(points1: List[Tuple], points2: List[Tuple], points3: List[Tuple]):
     x1, y1 = zip(*points1)
@@ -87,4 +139,3 @@ def plot_three_lines(points1: List[Tuple], points2: List[Tuple], points3: List[T
 
     # Save the plot (headless safe)
     plt.savefig("line_plot.png")
-
