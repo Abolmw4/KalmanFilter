@@ -1,13 +1,20 @@
+import json
+
 import numpy as np
 import uvicorn
+from dns.rdtypes.ANY.CNAME import CNAME
 from fastapi import FastAPI, Query, Path
-from typing import Dict, Annotated
+from typing import Dict, Annotated, List
+
+from watchfiles import awatch
+
 from kalmanfilter.kalman_filter import KalmanFilter
-from utils.util import Radar, RadarInfo, EstimateInfo, Response
+from utils.util import Radar, EstimateInfo, Response, RadarList, send_messege_to_kafka_from_request, read_json_file, recieve_messege_from_kafka, estimate_position
 
 RADAR_INFO: Dict[int, Radar] = {}
 RESULT_INFO: Dict[int, EstimateInfo] = {}
-__KALMAN = KalmanFilter(dt=4, u_x=0, u_y=0, std_acc=25, x_std_meas=50, y_std_meas=50)
+
+CONFIG = read_json_file()
 
 app = FastAPI()
 
@@ -15,35 +22,29 @@ async def is_empty(structure: Dict[int, Radar]) -> bool:
     return True if not structure else False
 
 @app.post("/save")
-async def save_info(request: RadarInfo):
-    if request.Id > 0:
-        RADAR_INFO[request.Id] = request.radar_info
-        z = np.matrix([[request.radar_info.X], [request.radar_info.Y]], dtype=np.float64)
-        __KALMAN.predict()
-        result = __KALMAN.updata(z)
-        EstimateInfo.Id = request.Id
-        EstimateInfo.X = result[0]
-        EstimateInfo.Y = result[1]
-        RESULT_INFO[request.Id] = EstimateInfo
-        return {"result": request}
+async def save_info(request: RadarList | Radar):
+    if isinstance(request, RadarList):
+        for value in request.radars:
+            await send_messege_to_kafka_from_request(value, CONFIG.get("raw_track_topic_name"))
+        return {"result": "All Request add successfully"}
+    elif isinstance(request, Radar):
+        await send_messege_to_kafka_from_request(request, CONFIG.get("raw_track_topic_name"))
+        return {"result": "request added successfully"}
     else:
-        raise ValueError("request is not statndard please check Request")
-        return
+        return {"Result": f"request not valid '{request}'"}
 
-@app.get("/dbinfo")
-async def check_db_info():
-    result = await is_empty(RADAR_INFO)
-    if not result:
-        return RADAR_INFO
-    else:
-        return {"result": "Empty"}
+@app.get("/{item_id}")
+async def get_info(item_id: Annotated[int, Path(ge=1, lt=1000000)]):
+    async for mes in recieve_messege_from_kafka(CONFIG.get("raw_track_topic_name")):
+        if mes.get('trackID') == item_id:
+            await estimate_position(Radar(trackID=mes.get("trackID"), X=mes.get("X"), Y=mes.get("Y"), V_X=mes.get("V_X"), V_Y=mes.get("V_Y")))
+            return mes
 
-@app.get("/estimate/{item_id}")
-async def estimate(item_id: Annotated[int, Path(gt=0, lt=100)]) -> Response:
-    Response.Id = RESULT_INFO.get(item_id).Id
-    Response.X = RESULT_INFO.get(item_id).X
-    Response.Y = RESULT_INFO.get(item_id).Y
-    return Response
+@app.get("/result/{item_id}")
+async def get_result(item_id: Annotated[int, Path(ge=1, lt=1000000)]):
+    async for mes in recieve_messege_from_kafka(CONFIG.get("estimate_topic_name")):
+        if mes.get("trackID") == item_id:
+            return mes
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)

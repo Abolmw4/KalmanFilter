@@ -1,9 +1,15 @@
 import matplotlib.pyplot as plt
 from typing import List, Tuple, Dict, Any
+
+import numpy as np
 from pydantic import BaseModel, Field
 import csv
 import json
 from kafka import KafkaProducer, KafkaConsumer
+from kalmanfilter.kalman_filter import KalmanFilter
+
+
+__KALMAN = KalmanFilter(dt=4, u_x=0, u_y=0, std_acc=25, x_std_meas=50, y_std_meas=50)
 
 def read_json_file(file_path: str="config/config.json") -> Dict[str, Any] | None:
     try:
@@ -20,14 +26,14 @@ def read_json_file(file_path: str="config/config.json") -> Dict[str, Any] | None
         return None
 
 class Radar(BaseModel):
+    trackID: int= Field(title="Id of track observed")
     X: float = Field(title="X cartesian position")
     Y: float = Field(title="Y cartesian position")
     V_X: float = Field(title="V_X speed in X direction", gt=0)
     V_Y: float = Field(title="V_Y speed in Y direction", gt=0)
 
-class RadarInfo(BaseModel):
-    Id: int
-    radar_info: Radar
+class RadarList(BaseModel):
+    radars: List[Radar]
 
 class EstimateInfo(BaseModel):
     Id: int
@@ -39,7 +45,20 @@ class Response(BaseModel):
     x: float
     Y: float
 
-async def send_messege_to_kafka(csv_file: str, kakfk_topic: str) -> None:
+async def send_messege_to_kafka_from_request(request: Radar, kakfk_topic: str):
+    PRODUCER = KafkaProducer(
+        bootstrap_servers=['localhost:9092'],
+        value_serializer=lambda v: json.dumps(v).encode('utf-8')
+    )
+    data = {"trackID":request.trackID, "X": request.X, "Y":request.Y, "V_X":request.V_X, "V_Y":request.V_Y}
+    try:
+        PRODUCER.send(kakfk_topic, value=data)
+        print(f"{request.trackID} add to kafka successfully")
+    except Exception as error:
+        print(f"Can't send messege to topic becuase '{error}'")
+    PRODUCER.flush()
+
+async def send_messege_to_kafka_from_file(csv_file: str, kakfk_topic: str) -> None:
     PRODUCER = KafkaProducer(
         bootstrap_servers=['localhost:9092'],
         value_serializer=lambda v: json.dumps(v).encode('utf-8')
@@ -60,7 +79,7 @@ async def send_messege_to_kafka(csv_file: str, kakfk_topic: str) -> None:
                 print(f"Can't send messege to topic becuase '{error}'")
     PRODUCER.flush()
 
-def recieve_messege_from_kafka(kafka_topic: str):
+async def recieve_messege_from_kafka(kafka_topic: str):
     CONSUMER = KafkaConsumer(
         kafka_topic,
         bootstrap_servers=['localhost:9092'],
@@ -76,6 +95,13 @@ def recieve_messege_from_kafka(kafka_topic: str):
     for messege in CONSUMER:
         yield messege.value
     CONSUMER.close()
+
+async def estimate_position(item: Radar):
+    z = np.matrix([[item.X], [item.Y]])
+    __KALMAN.predict()
+    estimation = __KALMAN.updata(z)
+    result = Radar(trackID=item.trackID, X=estimation[0], Y=estimation[1], V_X=1, V_Y=1)
+    await send_messege_to_kafka_from_request(result, kakfk_topic="estimaied")
 
 def plot(points: List[Tuple]):
     x_vals, y_vals = zip(*points)
